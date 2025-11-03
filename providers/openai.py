@@ -226,17 +226,61 @@ class OpenAIProvider:
 
         # Prefer exposing raw output list when available
         if hasattr(response, "output") and response.output:
-            def _safe_dump(x: Any):
+            def _safe_dump(x: Any, depth: int = 0, max_depth: int = 10, visited: Optional[set] = None) -> Any:
+                """
+                Safely dump object to dict, preventing infinite recursion.
+
+                Args:
+                    x: Object to dump
+                    depth: Current recursion depth
+                    max_depth: Maximum recursion depth
+                    visited: Set of visited object IDs to detect circular references
+
+                Returns:
+                    Serializable representation of the object
+                """
+                if visited is None:
+                    visited = set()
+
+                # Prevent infinite recursion
+                if depth > max_depth:
+                    return f"<max_depth_exceeded: {type(x).__name__}>"
+
+                obj_id = id(x)
+                if obj_id in visited:
+                    return f"<circular_ref: {type(x).__name__}>"
+
                 try:
+                    # Try Pydantic model_dump
                     if hasattr(x, "model_dump"):
-                        return x.model_dump()
+                        visited.add(obj_id)
+                        result = x.model_dump()
+                        visited.remove(obj_id)
+                        return result
+
+                    # Try to_dict
                     if hasattr(x, "to_dict"):
-                        return x.to_dict()
+                        visited.add(obj_id)
+                        result = x.to_dict()
+                        visited.remove(obj_id)
+                        return result
+
+                    # Handle primitives
                     if isinstance(x, (dict, list, str, int, float, bool)) or x is None:
                         return x
-                    return {k: _safe_dump(v) for k, v in vars(x).items() if not callable(v) and not k.startswith("_")}
-                except Exception:
-                    return str(x)
+
+                    # Recursively dump object attributes
+                    visited.add(obj_id)
+                    result = {
+                        k: _safe_dump(v, depth + 1, max_depth, visited)
+                        for k, v in vars(x).items()
+                        if not callable(v) and not k.startswith("_")
+                    }
+                    visited.remove(obj_id)
+                    return result
+                except Exception as e:
+                    return f"<dump_error: {type(x).__name__}: {str(e)}>"
+
             raw_output = [_safe_dump(item) for item in response.output]
             # If content not yet set, aggregate texts from parts
             if not content:

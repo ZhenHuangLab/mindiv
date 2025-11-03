@@ -123,7 +123,7 @@ class DeepThinkEngine:
         return self.model_stages.get(stage, self.model)
 
 
-    async def _verify_solution(self, problem_text: str, solution_text: str) -> (Dict[str, Any], bool):
+    async def _verify_solution(self, problem_text: str, solution_text: str) -> tuple[Dict[str, Any], bool]:
         """Run verification(s) possibly in parallel and return (log_entry, is_good)."""
         if self.enable_parallel_check:
             arith_task = asyncio.to_thread(arithmetic_sanity_check, solution_text)

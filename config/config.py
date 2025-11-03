@@ -3,10 +3,55 @@ Configuration management for mindiv.
 Handles loading and validation of YAML configuration files.
 """
 import os
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 import yaml
+
+
+def _replace_env_vars(data: Any) -> Any:
+    """
+    Recursively replace ${VAR_NAME} or $VAR_NAME with environment variable values.
+
+    Args:
+        data: Configuration data (dict, list, str, or primitive)
+
+    Returns:
+        Data with environment variables replaced
+
+    Examples:
+        >>> os.environ["TEST_KEY"] = "secret"
+        >>> _replace_env_vars("${TEST_KEY}")
+        'secret'
+        >>> _replace_env_vars({"key": "${TEST_KEY}"})
+        {'key': 'secret'}
+    """
+    if isinstance(data, str):
+        # Replace ${VAR_NAME} or $VAR_NAME with environment variable
+        # Pattern matches:
+        # - ${VAR_NAME} (preferred, more explicit)
+        # - $VAR_NAME (must start with letter or underscore, followed by alphanumeric or underscore)
+        pattern = r'\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)'
+
+        def replacer(match):
+            var_name = match.group(1) or match.group(2)
+            value = os.environ.get(var_name)
+            if value is None:
+                # Keep original if env var not found
+                return match.group(0)
+            return value
+
+        return re.sub(pattern, replacer, data)
+
+    elif isinstance(data, dict):
+        return {k: _replace_env_vars(v) for k, v in data.items()}
+
+    elif isinstance(data, list):
+        return [_replace_env_vars(item) for item in data]
+
+    # Return primitives unchanged
+    return data
 
 
 @dataclass
@@ -143,6 +188,9 @@ class Config:
         if data is None:
             raise ValueError(f"Empty configuration file: {config_path}")
 
+        # Replace environment variables in configuration
+        data = _replace_env_vars(data)
+
         # Load system settings
         system = data.get("system", {})
         rl_defaults = RateLimitDefaults.from_dict(system.get("rate_limit", {}))
@@ -162,6 +210,8 @@ class Config:
         if pricing_path and pricing_path.exists():
             with open(pricing_path, "r", encoding="utf-8") as f:
                 pricing = yaml.safe_load(f) or {}
+            # Replace environment variables in pricing data
+            pricing = _replace_env_vars(pricing)
 
         return cls(
             host=system.get("host", "0.0.0.0"),

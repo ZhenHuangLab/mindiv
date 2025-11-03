@@ -40,9 +40,6 @@ class PrefixCache:
         
         cache_dir.mkdir(parents=True, exist_ok=True)
         self._disk_cache = diskcache.Cache(str(cache_dir))
-        
-        # Provider-side cache mapping (prefix_hash -> response_id)
-        self._response_id_cache: Dict[str, str] = {}
     
     def compute_key(
         self,
@@ -138,35 +135,42 @@ class PrefixCache:
     def get_response_id(self, prefix_key: str) -> Optional[str]:
         """
         Get cached response ID for provider-side caching (OpenAI).
-        
+
+        Response IDs are persisted to disk cache to survive service restarts.
+
         Args:
             prefix_key: Prefix cache key
-        
+
         Returns:
-            Response ID or None
+            Response ID or None if not found/expired
         """
         if not self.enabled:
             return None
-        
-        return self._response_id_cache.get(prefix_key)
+
+        # Store response IDs with a prefix to avoid key collisions
+        cache_key = f"response_id:{prefix_key}"
+        return self._disk_cache.get(cache_key)
     
     def set_response_id(self, prefix_key: str, response_id: str) -> None:
         """
         Store response ID for provider-side caching.
-        
+
+        Response IDs are persisted to disk cache to survive service restarts.
+
         Args:
             prefix_key: Prefix cache key
             response_id: Response ID from provider
         """
         if not self.enabled:
             return
-        
-        self._response_id_cache[prefix_key] = response_id
+
+        # Store response IDs with a prefix to avoid key collisions
+        cache_key = f"response_id:{prefix_key}"
+        self._disk_cache.set(cache_key, response_id, expire=self.ttl)
     
     def clear(self) -> None:
-        """Clear all cached data."""
+        """Clear all cached data including response IDs."""
         self._disk_cache.clear()
-        self._response_id_cache.clear()
     
     def close(self) -> None:
         """Close the cache."""

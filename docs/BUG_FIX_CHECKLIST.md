@@ -2,9 +2,11 @@
 
 ## 🔴 严重 Bug (立即修复)
 
-### [ ] Bug #1: DeepThinkEngine 返回类型注解错误
-**文件**: `mindiv/engine/deep_think.py`  
-**行号**: 126  
+### [x] Bug #1: DeepThinkEngine 返回类型注解错误
+**文件**: `mindiv/engine/deep_think.py`
+**行号**: 126
+**状态**: ✅ 已修复
+
 **当前代码**:
 ```python
 async def _verify_solution(self, problem_text: str, solution_text: str) -> (Dict[str, Any], bool):
@@ -23,9 +25,10 @@ mypy mindiv/engine/deep_think.py
 
 ---
 
-### [ ] Bug #2: PrefixCache response_id 未持久化
-**文件**: `mindiv/utils/cache.py`  
-**行号**: 44-45, 138-164  
+### [x] Bug #2: PrefixCache response_id 未持久化
+**文件**: `mindiv/utils/cache.py`
+**行号**: 44-45, 138-164
+**状态**: ✅ 已修复
 
 **问题**: response_id 只存储在内存字典中,服务重启后丢失
 
@@ -82,9 +85,10 @@ assert cache2.get_response_id("test_key") == "resp_123"
 
 ---
 
-### [ ] Bug #3: OpenAIProvider._safe_dump 可能无限递归
-**文件**: `mindiv/providers/openai.py`  
-**行号**: 229-239  
+### [x] Bug #3: OpenAIProvider._safe_dump 可能无限递归
+**文件**: `mindiv/providers/openai.py`
+**行号**: 229-239
+**状态**: ✅ 已修复
 
 **修复代码**:
 ```python
@@ -151,9 +155,10 @@ assert "<circular_ref" in str(result)
 
 ---
 
-### [ ] Bug #4: Config 未实现环境变量替换
-**文件**: `mindiv/config/config.py`  
-**行号**: 135-175  
+### [x] Bug #4: Config 未实现环境变量替换
+**文件**: `mindiv/config/config.py`
+**行号**: 135-175
+**状态**: ✅ 已修复
 
 **修复步骤**:
 

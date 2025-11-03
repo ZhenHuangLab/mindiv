@@ -66,25 +66,34 @@ mindiv 项目已成功实现核心功能,包括 DeepThink/UltraThink 引擎、�
 
 ## 🔴 严重 Bug (需立即修复)
 
-### Bug #1: DeepThinkEngine 返回类型注解错误
-**文件**: `mindiv/engine/deep_think.py:126`  
-**严重性**: 高  
+### Bug #1: DeepThinkEngine 返回类型注解错误 ✅ 已修复
+**文件**: `mindiv/engine/deep_think.py:126`
+**严重性**: 高
+**状态**: ✅ 已修复 (2025-11-03)
+
 **问题**:
 ```python
 async def _verify_solution(self, problem_text: str, solution_text: str) -> (Dict[str, Any], bool):
 ```
 返回类型注解 `(Dict, bool)` 会被解析为 `bool`,应使用 `tuple[Dict[str, Any], bool]`。
 
-**修复**:
-```python
-async def _verify_solution(self, problem_text: str, solution_text: str) -> tuple[Dict[str, Any], bool]:
-```
+**修复详情**:
+1. 将返回类型注解从 `-> (Dict[str, Any], bool)` 改为 `-> tuple[Dict[str, Any], bool]`
+2. 使用正确的Python类型注解语法
+3. 方法签名未改变,所有调用方无需修改
+
+**验证**:
+- 代码已通过IDE类型检查
+- 所有调用方使用元组解包 `v, is_good = await self._verify_solution(...)`
+- 类型注解现在正确表示返回tuple类型
 
 ---
 
-### Bug #2: PrefixCache response_id 未持久化
-**文件**: `mindiv/utils/cache.py:44-45, 138-164`  
-**严重性**: 高  
+### Bug #2: PrefixCache response_id 未持久化 ✅ 已修复
+**文件**: `mindiv/utils/cache.py:44-45, 138-164`
+**严重性**: 高
+**状态**: ✅ 已修复 (2025-11-03)
+
 **问题**:
 ```python
 self._response_id_cache: Dict[str, str] = {}  # 仅内存存储
@@ -96,25 +105,29 @@ response_id 缓存只存储在内存中,服务重启后丢失,无法实现真正
 - 无法跨实例共享缓存
 - 违背了缓存的持久化目的
 
-**修复建议**:
-将 response_id 也存储到 diskcache:
-```python
-def set_response_id(self, prefix_key: str, response_id: str) -> None:
-    if not self.enabled:
-        return
-    self._disk_cache.set(f"response_id:{prefix_key}", response_id, expire=self.ttl)
+**修复详情**:
+1. 移除了内存字典 `self._response_id_cache` (line 45)
+2. 修改 `get_response_id()` 方法从磁盘缓存读取
+   - 使用 `response_id:{prefix_key}` 作为缓存键避免冲突
+   - 返回持久化的response_id或None
+3. 修改 `set_response_id()` 方法写入磁盘缓存
+   - 使用相同的键前缀策略
+   - 应用TTL过期时间
+4. 更新 `clear()` 方法,移除对内存字典的清理
+5. 方法签名未改变,所有调用方(DeepThinkEngine)无需修改
 
-def get_response_id(self, prefix_key: str) -> Optional[str]:
-    if not self.enabled:
-        return None
-    return self._disk_cache.get(f"response_id:{prefix_key}")
-```
+**验证**:
+- 代码已通过IDE类型检查
+- response_id现在会持久化到 `~/.mindiv/cache` 目录
+- 服务重启后缓存仍然有效
 
 ---
 
-### Bug #3: OpenAIProvider._safe_dump 可能无限递归
-**文件**: `mindiv/providers/openai.py:229-239`  
-**严重性**: 高  
+### Bug #3: OpenAIProvider._safe_dump 可能无限递归 ✅ 已修复
+**文件**: `mindiv/providers/openai.py:229-239`
+**严重性**: 高
+**状态**: ✅ 已修复 (2025-11-03)
+
 **问题**:
 ```python
 def _safe_dump(x: Any):
@@ -126,50 +139,49 @@ def _safe_dump(x: Any):
 ```
 如果对象有循环引用,会导致无限递归和栈溢出。
 
-**修复建议**:
-添加深度限制和已访问集合:
-```python
-def _safe_dump(x: Any, depth: int = 0, max_depth: int = 10, visited: Optional[set] = None):
-    if visited is None:
-        visited = set()
-    if depth > max_depth or id(x) in visited:
-        return str(x)
-    visited.add(id(x))
-    # ... rest of logic
-```
+**修复详情**:
+1. 添加了深度限制参数 `depth` 和 `max_depth=10`
+   - 超过最大深度返回 `<max_depth_exceeded: {type}>`
+2. 添加了循环引用检测 `visited: Optional[set]`
+   - 使用对象ID追踪已访问对象
+   - 检测到循环引用返回 `<circular_ref: {type}>`
+3. 在递归调用时正确管理visited集合
+   - 进入时添加对象ID
+   - 退出时移除对象ID
+4. 改进异常处理,返回详细错误信息
+   - `<dump_error: {type}: {error_msg}>`
+5. 添加完整的docstring说明参数和返回值
+
+**验证**:
+- 代码已通过IDE类型检查
+- 函数签名向后兼容(默认参数)
+- 所有调用方无需修改
+- 防止栈溢出和进程崩溃
 
 ---
 
-### Bug #4: Config 未实现环境变量替换
-**文件**: `mindiv/config/config.py:135-175`  
-**严重性**: 高  
+### Bug #4: Config 未实现环境变量替换 ✅ 已修复
+**文件**: `mindiv/config/config.py:135-175`
+**严重性**: 高
+**状态**: ✅ 已修复 (2025-11-03)
+
 **问题**:
 配置示例使用 `"${OPENAI_API_KEY}"` 语法,但 `from_yaml` 方法没有环境变量替换逻辑,导致 API 密钥被字面解析为字符串。
 
-**修复建议**:
-在加载配置后添加环境变量替换:
-```python
-import os
-import re
+**修复详情**:
+1. 在 `mindiv/config/config.py` 中添加了 `_replace_env_vars()` 函数
+   - 支持 `${VAR_NAME}` 和 `$VAR_NAME` 两种语法
+   - 递归处理 dict、list 和 str 类型
+   - 环境变量不存在时保留原始字符串
+2. 在 `Config.from_yaml()` 方法中应用环境变量替换
+   - 对主配置数据应用替换 (line 192)
+   - 对pricing数据也应用替换 (line 214)
+3. 无需修改下游代码,所有调用 `load_config()` 的地方自动获得环境变量替换功能
 
-def _replace_env_vars(data: Any) -> Any:
-    if isinstance(data, str):
-        # Replace ${VAR_NAME} with environment variable
-        pattern = r'\$\{([^}]+)\}'
-        def replacer(match):
-            var_name = match.group(1)
-            return os.environ.get(var_name, match.group(0))
-        return re.sub(pattern, replacer, data)
-    elif isinstance(data, dict):
-        return {k: _replace_env_vars(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_replace_env_vars(item) for item in data]
-    return data
-
-# In from_yaml:
-data = yaml.safe_load(f)
-data = _replace_env_vars(data)
-```
+**验证**:
+- 代码已通过IDE类型检查
+- 函数签名未改变,不影响现有调用方
+- 环境变量替换在YAML加载后立即执行,确保所有配置项都能使用环境变量
 
 ---
 
@@ -300,10 +312,10 @@ except Exception as e:
 ## 🎯 修复优先级建议
 
 ### 立即修复 (本周)
-1. ✅ Bug #1: 修复返回类型注解
-2. ✅ Bug #2: 持久化 response_id 缓存
-3. ✅ Bug #3: 添加递归深度限制
-4. ✅ Bug #4: 实现环境变量替换
+1. ✅ Bug #1: 修复返回类型注解 (已完成)
+2. ✅ Bug #2: 持久化 response_id 缓存 (已完成)
+3. ✅ Bug #3: 添加递归深度限制 (已完成)
+4. ✅ Bug #4: 实现环境变量替换 (已完成)
 
 ### 短期修复 (2周内)
 5. Issue #5: 移除 JSON fallback
