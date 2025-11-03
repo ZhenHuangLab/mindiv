@@ -32,6 +32,42 @@ class RateLimitConfig(BaseModel):
 
 
 
+
+def _effective_rate_limit(
+    rl_defaults: Optional[Any],
+    rl_req: Optional[RateLimitConfig],
+    provider_name: str,
+    model_name: str,
+) -> Dict[str, Any]:
+    """
+    Determine the effective rate-limit parameters by applying a simple, explicit fallback:
+    request override -> config defaults -> None.
+
+    Returns a dict with: qps, burst, window_limit, window_seconds, timeout, strategy, bucket_key
+    """
+    def pick(req_val, default_val):
+        return req_val if req_val is not None else default_val
+
+    qps = pick(rl_req.qps if rl_req else None, getattr(rl_defaults, "qps", None))
+    burst = pick(rl_req.burst if rl_req else None, getattr(rl_defaults, "burst", None))
+    window_limit = pick(rl_req.window_limit if rl_req else None, getattr(rl_defaults, "window_limit", None))
+    window_seconds = pick(rl_req.window_seconds if rl_req else None, getattr(rl_defaults, "window_seconds", None))
+    timeout = pick(rl_req.timeout if rl_req else None, getattr(rl_defaults, "timeout", None))
+    strategy = (rl_req.strategy if rl_req and rl_req.strategy else getattr(rl_defaults, "strategy", "wait")) or "wait"
+    template = getattr(rl_defaults, "bucket_template", "{provider}:{model}") if rl_defaults else "{provider}:{model}"
+    bucket_key = _compose_bucket_key(template, provider_name, model_name, rl_req.bucket_key if rl_req else None)
+
+    return {
+        "qps": qps,
+        "burst": burst,
+        "window_limit": window_limit,
+        "window_seconds": window_seconds,
+        "timeout": timeout,
+        "strategy": strategy,
+        "bucket_key": bucket_key,
+    }
+
+
 async def _configure_rate_limiter(cfg, req_rate_limit: Optional[RateLimitConfig], provider: Any, model_name: str):
     """
     Compute effective rate-limit settings by merging request overrides with config defaults,
@@ -40,30 +76,36 @@ async def _configure_rate_limiter(cfg, req_rate_limit: Optional[RateLimitConfig]
     """
     from mindiv.utils.rate_limiter import get_global_rate_limiter
 
+    # Get effective rate limit parameters using the shared logic
     rl_defaults = getattr(cfg, "rate_limit", None)
-    rl_req = req_rate_limit
+    provider_name = getattr(provider, "name", "")
 
-    qps = rl_req.qps if rl_req and rl_req.qps is not None else getattr(rl_defaults, "qps", None)
-    burst = rl_req.burst if rl_req and rl_req.burst is not None else getattr(rl_defaults, "burst", None)
-    window_limit = rl_req.window_limit if rl_req and rl_req.window_limit is not None else getattr(rl_defaults, "window_limit", None)
-    window_seconds = rl_req.window_seconds if rl_req and rl_req.window_seconds is not None else getattr(rl_defaults, "window_seconds", None)
-    timeout = rl_req.timeout if rl_req and rl_req.timeout is not None else getattr(rl_defaults, "timeout", None)
-    strategy = (rl_req.strategy if rl_req and rl_req.strategy else getattr(rl_defaults, "strategy", "wait")) or "wait"
-    template = getattr(rl_defaults, "bucket_template", "{provider}:{model}") if rl_defaults else "{provider}:{model}"
+    effective_params = _effective_rate_limit(
+        rl_defaults=rl_defaults,
+        rl_req=req_rate_limit,
+        provider_name=provider_name,
+        model_name=model_name,
+    )
 
+    # Extract parameters from the effective params dict
+    qps = effective_params["qps"]
+    burst = effective_params["burst"]
+    window_limit = effective_params["window_limit"]
+    window_seconds = effective_params["window_seconds"]
+    timeout = effective_params["timeout"]
+    strategy = effective_params["strategy"]
+    bucket_key = effective_params["bucket_key"]
+
+    # Configure global rate limiter if any limit is specified
     rate_limiter = None
     if any(v is not None for v in (qps, burst, window_limit, window_seconds)):
         gl = get_global_rate_limiter()
-        bucket_key = _compose_bucket_key(
-            template,
-            getattr(provider, "name", ""),
-            model_name,
-            rl_req.bucket_key if rl_req else None,
-        )
+
         if qps is not None and burst is not None:
             await gl.configure_bucket(bucket_key, qps=float(qps), burst=int(burst))
         if window_limit is not None and window_seconds is not None:
             await gl.configure_window(bucket_key, limit=int(window_limit), window_seconds=float(window_seconds))
+
         rate_limiter = gl
 
     return rate_limiter, timeout, strategy
