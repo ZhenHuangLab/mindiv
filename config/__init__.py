@@ -4,6 +4,7 @@ Configuration module for mindiv.
 from typing import Optional
 from .config import (
     Config,
+    ConfigValidationError,
     ModelConfig,
     ProviderConfig,
     load_config,
@@ -49,6 +50,7 @@ def set_config(config: Config) -> None:
 
 __all__ = [
     "Config",
+    "ConfigValidationError",
     "ModelConfig",
     "ProviderConfig",
     "load_config",

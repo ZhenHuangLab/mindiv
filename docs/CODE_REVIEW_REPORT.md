@@ -276,12 +276,43 @@ except Exception as e:
 **问题**: 尝试解析整个 solution_text 为 sympy 表达式,但数学证明通常包含自然语言。
 
 ### Issue #12: 速率限制配置逻辑过于复杂
-**文件**: `mindiv/api/v1/engines.py:61-82`  
+**文件**: `mindiv/api/v1/engines.py:61-82`
 **问题**: 多层 fallback 逻辑难以测试和维护。
 
-### Issue #13: 缺少配置验证
-**文件**: `mindiv/config/config.py`  
-**问题**: 加载配置后没有验证必需字段(如 API 密钥)是否存在。
+### Issue #13: 缺少配置验证 ✅ 已修复
+**文件**: `mindiv/config/config.py`
+**严重性**: 中等
+**状态**: ✅ 已修复 (2025-11-03)
+
+**问题**:
+加载配置后没有验证必需字段(如 API 密钥)是否存在，可能导致运行时错误。
+
+**修复详情**:
+1. **新增ConfigValidationError异常类**：用于收集和报告所有验证错误
+2. **新增_is_env_var_placeholder()辅助函数**：检测未替换的环境变量占位符（如`${OPENAI_API_KEY}`）
+3. **ProviderConfig.validate()**：验证provider配置
+   - base_url不能为空且必须以http://或https://开头
+   - api_key不能为空且不能是未替换的环境变量
+   - timeout必须>0
+   - max_retries必须>=0
+4. **ModelConfig.validate(providers)**：验证model配置
+   - provider必须引用已存在的provider
+   - model名称不能为空
+   - level必须是"deepthink"或"ultrathink"
+   - 所有数值参数（max_iterations、required_verifications等）必须>0
+   - UltraThink模式下的num_agents验证
+5. **Config.validate()**：验证整体配置
+   - log_level必须是有效的日志级别
+   - port必须在1-65535范围内
+   - 至少要有一个provider和一个model
+   - 调用所有子配置的validate()方法
+6. **在Config.from_yaml()中自动调用validate()**：确保加载的配置立即被验证
+
+**验证**:
+- 遵循Fail-Fast原则，在配置加载时立即发现问题
+- 提供清晰的错误信息，指出具体哪个配置项有问题
+- 支持批量错误报告，一次性显示所有验证错误
+- 检测常见配置错误（如忘记设置环境变量）
 
 ---
 

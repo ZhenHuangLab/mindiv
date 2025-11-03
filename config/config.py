@@ -10,6 +10,43 @@ from dataclasses import dataclass, field
 import yaml
 
 
+class ConfigValidationError(ValueError):
+    """Exception raised when configuration validation fails."""
+
+    def __init__(self, errors: List[str]):
+        """
+        Initialize validation error with list of error messages.
+
+        Args:
+            errors: List of validation error messages
+        """
+        self.errors = errors
+        message = "Configuration validation failed:\n" + "\n".join(f"  - {err}" for err in errors)
+        super().__init__(message)
+
+
+def _is_env_var_placeholder(value: str) -> bool:
+    """
+    Check if a string contains unreplaced environment variable placeholders.
+
+    Args:
+        value: String to check
+
+    Returns:
+        True if the string contains ${VAR_NAME} or $VAR_NAME patterns
+
+    Examples:
+        >>> _is_env_var_placeholder("${OPENAI_API_KEY}")
+        True
+        >>> _is_env_var_placeholder("sk-1234567890")
+        False
+    """
+    if not isinstance(value, str):
+        return False
+    pattern = r'\$\{[^}]+\}|\$[A-Z_][A-Z0-9_]*'
+    return bool(re.search(pattern, value))
+
+
 def _replace_env_vars(data: Any) -> Any:
     """
     Recursively replace ${VAR_NAME} or $VAR_NAME with environment variable values.
@@ -103,34 +140,69 @@ class ProviderConfig:
             max_retries=data.get("max_retries", 3),
         )
 
+    def validate(self) -> None:
+        """
+        Validate provider configuration.
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        errors = []
+
+        # Validate base_url
+        if not self.base_url:
+            errors.append(f"Provider '{self.provider_id}': base_url is required")
+        elif not (self.base_url.startswith("http://") or self.base_url.startswith("https://")):
+            errors.append(f"Provider '{self.provider_id}': base_url must start with http:// or https://")
+
+        # Validate api_key
+        if not self.api_key:
+            errors.append(f"Provider '{self.provider_id}': api_key is required")
+        elif _is_env_var_placeholder(self.api_key):
+            errors.append(
+                f"Provider '{self.provider_id}': api_key contains unreplaced environment variable '{self.api_key}'. "
+                f"Please set the environment variable or provide the key directly."
+            )
+
+        # Validate timeout
+        if self.timeout <= 0:
+            errors.append(f"Provider '{self.provider_id}': timeout must be positive (got {self.timeout})")
+
+        # Validate max_retries
+        if self.max_retries < 0:
+            errors.append(f"Provider '{self.provider_id}': max_retries must be non-negative (got {self.max_retries})")
+
+        if errors:
+            raise ConfigValidationError(errors)
+
 
 @dataclass
 class ModelConfig:
     """Configuration for a single model."""
-    
+
     model_id: str
     name: str
     provider: str
     model: str
     level: str  # "deepthink" or "ultrathink"
-    
+
     # Engine parameters
     max_iterations: int = 30
     required_verifications: int = 3
     max_errors: int = 10
     enable_planning: bool = False
     enable_parallel_check: bool = False
-    
+
     # UltraThink parameters
     num_agents: Optional[int] = None
     parallel_run_agents: int = 3
-    
+
     # Stage-specific models
     stage_models: Dict[str, str] = field(default_factory=dict)
-    
+
     # Rate limiting
     rpm: Optional[int] = None
-    
+
     @classmethod
     def from_dict(cls, model_id: str, data: Dict[str, Any]) -> "ModelConfig":
         """Create ModelConfig from dictionary."""
@@ -150,10 +222,80 @@ class ModelConfig:
             stage_models=data.get("stage_models", {}),
             rpm=data.get("rpm"),
         )
-    
+
     def get_stage_model(self, stage: str) -> str:
         """Get model for a specific stage, fallback to default model."""
         return self.stage_models.get(stage, self.model)
+
+    def validate(self, providers: Dict[str, ProviderConfig]) -> None:
+        """
+        Validate model configuration.
+
+        Args:
+            providers: Dictionary of available provider configurations
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        errors = []
+
+        # Validate provider reference
+        if not self.provider:
+            errors.append(f"Model '{self.model_id}': provider is required")
+        elif self.provider not in providers:
+            available = ", ".join(providers.keys()) if providers else "none"
+            errors.append(
+                f"Model '{self.model_id}': provider '{self.provider}' not found. "
+                f"Available providers: {available}"
+            )
+
+        # Validate model name
+        if not self.model:
+            errors.append(f"Model '{self.model_id}': model name is required")
+
+        # Validate level
+        valid_levels = ["deepthink", "ultrathink"]
+        if self.level not in valid_levels:
+            errors.append(
+                f"Model '{self.model_id}': level must be one of {valid_levels} (got '{self.level}')"
+            )
+
+        # Validate numeric parameters
+        if self.max_iterations <= 0:
+            errors.append(
+                f"Model '{self.model_id}': max_iterations must be positive (got {self.max_iterations})"
+            )
+
+        if self.required_verifications <= 0:
+            errors.append(
+                f"Model '{self.model_id}': required_verifications must be positive (got {self.required_verifications})"
+            )
+
+        if self.max_errors <= 0:
+            errors.append(
+                f"Model '{self.model_id}': max_errors must be positive (got {self.max_errors})"
+            )
+
+        if self.parallel_run_agents <= 0:
+            errors.append(
+                f"Model '{self.model_id}': parallel_run_agents must be positive (got {self.parallel_run_agents})"
+            )
+
+        # Validate UltraThink-specific parameters
+        if self.level == "ultrathink":
+            if self.num_agents is not None and self.num_agents <= 0:
+                errors.append(
+                    f"Model '{self.model_id}': num_agents must be positive when set (got {self.num_agents})"
+                )
+
+        # Validate RPM if set
+        if self.rpm is not None and self.rpm <= 0:
+            errors.append(
+                f"Model '{self.model_id}': rpm must be positive when set (got {self.rpm})"
+            )
+
+        if errors:
+            raise ConfigValidationError(errors)
 
 
 @dataclass
@@ -176,9 +318,78 @@ class Config:
     # Pricing data
     pricing: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    def validate(self) -> None:
+        """
+        Validate entire configuration.
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        errors = []
+
+        # Validate system settings
+        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if self.log_level not in valid_log_levels:
+            errors.append(
+                f"System: log_level must be one of {valid_log_levels} (got '{self.log_level}')"
+            )
+
+        if self.port <= 0 or self.port > 65535:
+            errors.append(f"System: port must be between 1 and 65535 (got {self.port})")
+
+        # Validate that we have at least one provider
+        if not self.providers:
+            errors.append(
+                "Configuration must have at least one provider. "
+                "Please add provider configurations in the 'providers' section."
+            )
+
+        # Validate that we have at least one model
+        if not self.models:
+            errors.append(
+                "Configuration must have at least one model. "
+                "Please add model configurations in the 'models' section."
+            )
+
+        # If we have critical errors, raise early
+        if errors:
+            raise ConfigValidationError(errors)
+
+        # Validate each provider
+        for provider in self.providers.values():
+            try:
+                provider.validate()
+            except ConfigValidationError as e:
+                errors.extend(e.errors)
+
+        # Validate each model
+        for model in self.models.values():
+            try:
+                model.validate(self.providers)
+            except ConfigValidationError as e:
+                errors.extend(e.errors)
+
+        # Raise all accumulated errors
+        if errors:
+            raise ConfigValidationError(errors)
+
     @classmethod
     def from_yaml(cls, config_path: Path, pricing_path: Optional[Path] = None) -> "Config":
-        """Load configuration from YAML files."""
+        """
+        Load configuration from YAML files.
+
+        Args:
+            config_path: Path to config.yaml
+            pricing_path: Optional path to pricing.yaml
+
+        Returns:
+            Validated Config instance
+
+        Raises:
+            FileNotFoundError: If config file not found
+            ValueError: If config file is empty
+            ConfigValidationError: If configuration validation fails
+        """
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
@@ -213,7 +424,7 @@ class Config:
             # Replace environment variables in pricing data
             pricing = _replace_env_vars(pricing)
 
-        return cls(
+        config = cls(
             host=system.get("host", "0.0.0.0"),
             port=system.get("port", 8000),
             api_key=system.get("api_key"),
@@ -223,6 +434,11 @@ class Config:
             models=models,
             pricing=pricing,
         )
+
+        # Validate configuration before returning
+        config.validate()
+
+        return config
 
     def get_provider(self, provider_id: str) -> ProviderConfig:
         """Get provider configuration by ID."""
