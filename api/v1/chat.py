@@ -4,6 +4,15 @@ from pydantic import BaseModel, Field
 
 from mindiv.config import get_config
 from mindiv.providers.registry import resolve_model_and_provider
+from mindiv.providers.exceptions import (
+    ProviderError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderInvalidRequestError,
+    ProviderNotFoundError,
+    ProviderServerError,
+)
 
 router = APIRouter()
 
@@ -93,9 +102,20 @@ async def chat_completions(req: ChatCompletionRequest) -> Any:
                         }],
                     }
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except ProviderError as e:
+                # Emit structured error event
+                err = {
+                    "error": {
+                        "message": e.message,
+                        "type": e.error_code,
+                        "code": e.error_code,
+                        "provider": e.provider,
+                    }
+                }
+                yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
             except Exception as e:
-                # Emit an error event then terminate
-                err = {"error": str(e)}
+                # Emit generic error event
+                err = {"error": {"message": str(e), "type": "unknown_error"}}
                 yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
             finally:
                 # End of stream marker
@@ -112,8 +132,28 @@ async def chat_completions(req: ChatCompletionRequest) -> Any:
             **(req.extra_body or {}),
         )
         return to_openai_chat_completion(model_name, out)
+    except ProviderError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={
+                "error": {
+                    "message": e.message,
+                    "type": e.error_code,
+                    "code": e.error_code,
+                    "provider": e.provider,
+                }
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"provider.{provider_name} error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "internal_error",
+                }
+            }
+        )
 
 
 

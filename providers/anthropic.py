@@ -3,8 +3,18 @@ Anthropic Claude provider adapter.
 Supports messages API with streaming and prompt caching.
 """
 from typing import Dict, Any, List, Optional, AsyncIterator
+import anthropic
 from anthropic import AsyncAnthropic
 from .base import LLMProvider, ProviderCapabilities
+from .exceptions import (
+    ProviderError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderInvalidRequestError,
+    ProviderNotFoundError,
+    ProviderServerError,
+)
 from ..config import ProviderConfig
 
 
@@ -110,8 +120,25 @@ class AnthropicProvider:
             params["system"] = system
         
         params.update(kwargs)
-        
-        response = await self._client.messages.create(**params)
+
+        try:
+            response = await self._client.messages.create(**params)
+        except anthropic.AuthenticationError as e:
+            raise ProviderAuthError(self.name, f"Invalid API key: {str(e)}", e)
+        except anthropic.RateLimitError as e:
+            raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {str(e)}", e)
+        except anthropic.APITimeoutError as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except anthropic.BadRequestError as e:
+            raise ProviderInvalidRequestError(self.name, f"Invalid request: {str(e)}", e)
+        except anthropic.NotFoundError as e:
+            raise ProviderNotFoundError(self.name, f"Model not found: {str(e)}", e)
+        except anthropic.InternalServerError as e:
+            raise ProviderServerError(self.name, f"Server error: {str(e)}", e, status_code=500)
+        except anthropic.APIError as e:
+            raise ProviderError(self.name, f"API error: {str(e)}", e)
+        except Exception as e:
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
 
         # Extract content and raw typed blocks
         content = ""
@@ -190,8 +217,27 @@ class AnthropicProvider:
             params["system"] = system
         
         params.update(kwargs)
-        
-        async with self._client.messages.stream(**params) as stream:
+
+        try:
+            stream_context = self._client.messages.stream(**params)
+        except anthropic.AuthenticationError as e:
+            raise ProviderAuthError(self.name, f"Invalid API key: {str(e)}", e)
+        except anthropic.RateLimitError as e:
+            raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {str(e)}", e)
+        except anthropic.APITimeoutError as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except anthropic.BadRequestError as e:
+            raise ProviderInvalidRequestError(self.name, f"Invalid request: {str(e)}", e)
+        except anthropic.NotFoundError as e:
+            raise ProviderNotFoundError(self.name, f"Model not found: {str(e)}", e)
+        except anthropic.InternalServerError as e:
+            raise ProviderServerError(self.name, f"Server error: {str(e)}", e, status_code=500)
+        except anthropic.APIError as e:
+            raise ProviderError(self.name, f"API error: {str(e)}", e)
+        except Exception as e:
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
+
+        async with stream_context as stream:
             async for event in stream:
                 if hasattr(event, "delta") and hasattr(event.delta, "text"):
                     yield {

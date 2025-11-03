@@ -5,6 +5,15 @@ Supports systemInstruction and thinkingConfig for thinking models.
 from typing import Dict, Any, List, Optional, AsyncIterator
 import httpx
 from .base import LLMProvider, ProviderCapabilities
+from .exceptions import (
+    ProviderError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderInvalidRequestError,
+    ProviderNotFoundError,
+    ProviderServerError,
+)
 from ..config import ProviderConfig
 
 
@@ -128,11 +137,43 @@ class GeminiProvider:
             }
         
         url = self._build_url(model, stream=False)
-        
-        response = await self._client.post(url, json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
+
+        try:
+            response = await self._client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            error_msg = str(e)
+            try:
+                error_data = e.response.json()
+                if "error" in error_data:
+                    error_msg = error_data["error"].get("message", str(e))
+            except Exception:
+                pass
+
+            if status_code == 401 or status_code == 403:
+                raise ProviderAuthError(self.name, f"Authentication failed: {error_msg}", e)
+            elif status_code == 429:
+                raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {error_msg}", e)
+            elif status_code == 400:
+                raise ProviderInvalidRequestError(self.name, f"Invalid request: {error_msg}", e)
+            elif status_code == 404:
+                raise ProviderNotFoundError(self.name, f"Model not found: {error_msg}", e)
+            elif status_code >= 500:
+                raise ProviderServerError(self.name, f"Server error: {error_msg}", e, status_code=status_code)
+            else:
+                raise ProviderError(self.name, f"HTTP {status_code}: {error_msg}", e, status_code=status_code)
+        except httpx.TimeoutException as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except httpx.RequestError as e:
+            raise ProviderError(self.name, f"Network error: {str(e)}", e)
+        except Exception as e:
+            if isinstance(e, (ProviderError, ProviderAuthError, ProviderRateLimitError,
+                            ProviderTimeoutError, ProviderInvalidRequestError,
+                            ProviderNotFoundError, ProviderServerError)):
+                raise
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
         
         # Extract content
         content = ""
@@ -199,9 +240,41 @@ class GeminiProvider:
             }
         
         url = self._build_url(model, stream=True)
-        
-        async with self._client.stream("POST", url, json=payload) as response:
-            response.raise_for_status()
+
+        try:
+            stream_context = self._client.stream("POST", url, json=payload)
+        except Exception as e:
+            raise ProviderError(self.name, f"Failed to create stream: {str(e)}", e)
+
+        async with stream_context as response:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                error_msg = str(e)
+                try:
+                    error_data = e.response.json()
+                    if "error" in error_data:
+                        error_msg = error_data["error"].get("message", str(e))
+                except Exception:
+                    pass
+
+                if status_code == 401 or status_code == 403:
+                    raise ProviderAuthError(self.name, f"Authentication failed: {error_msg}", e)
+                elif status_code == 429:
+                    raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {error_msg}", e)
+                elif status_code == 400:
+                    raise ProviderInvalidRequestError(self.name, f"Invalid request: {error_msg}", e)
+                elif status_code == 404:
+                    raise ProviderNotFoundError(self.name, f"Model not found: {error_msg}", e)
+                elif status_code >= 500:
+                    raise ProviderServerError(self.name, f"Server error: {error_msg}", e, status_code=status_code)
+                else:
+                    raise ProviderError(self.name, f"HTTP {status_code}: {error_msg}", e, status_code=status_code)
+            except httpx.TimeoutException as e:
+                raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+            except httpx.RequestError as e:
+                raise ProviderError(self.name, f"Network error: {str(e)}", e)
 
             async for line in response.aiter_lines():
                 line = line.strip()

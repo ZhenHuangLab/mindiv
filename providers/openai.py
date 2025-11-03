@@ -3,8 +3,18 @@ OpenAI provider adapter.
 Supports both chat completions and responses API with prefix caching.
 """
 from typing import Dict, Any, List, Optional, AsyncIterator
+import openai
 from openai import AsyncOpenAI
 from .base import LLMProvider, ProviderCapabilities
+from .exceptions import (
+    ProviderError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderInvalidRequestError,
+    ProviderNotFoundError,
+    ProviderServerError,
+)
 from ..config import ProviderConfig
 
 
@@ -54,7 +64,7 @@ class OpenAIProvider:
     ) -> Dict[str, Any]:
         """
         Send chat completion request.
-        
+
         Args:
             model: Model identifier
             messages: List of messages
@@ -62,33 +72,59 @@ class OpenAIProvider:
             max_tokens: Maximum tokens to generate
             stream: Whether to stream (not supported in this method)
             **kwargs: Additional parameters
-        
+
         Returns:
             Response dictionary with 'content' and 'usage'
+
+        Raises:
+            ProviderAuthError: Authentication failed
+            ProviderRateLimitError: Rate limit exceeded
+            ProviderTimeoutError: Request timeout
+            ProviderInvalidRequestError: Invalid request parameters
+            ProviderNotFoundError: Model or resource not found
+            ProviderServerError: Server error
+            ProviderError: Other provider errors
         """
         if stream:
             raise ValueError("Use chat_stream() for streaming requests")
-        
+
         params = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
         }
-        
+
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
-        
+
         params.update(kwargs)
-        
-        response = await self._client.chat.completions.create(**params)
-        
+
+        try:
+            response = await self._client.chat.completions.create(**params)
+        except openai.AuthenticationError as e:
+            raise ProviderAuthError(self.name, f"Invalid API key: {str(e)}", e)
+        except openai.RateLimitError as e:
+            raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {str(e)}", e)
+        except (openai.APITimeoutError, openai.Timeout) as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except openai.BadRequestError as e:
+            raise ProviderInvalidRequestError(self.name, f"Invalid request: {str(e)}", e)
+        except openai.NotFoundError as e:
+            raise ProviderNotFoundError(self.name, f"Model not found: {str(e)}", e)
+        except openai.InternalServerError as e:
+            raise ProviderServerError(self.name, f"Server error: {str(e)}", e, status_code=500)
+        except openai.APIError as e:
+            raise ProviderError(self.name, f"API error: {str(e)}", e)
+        except Exception as e:
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
+
         # Extract content and usage
         content = response.choices[0].message.content or ""
         usage = {
             "input_tokens": response.usage.prompt_tokens if response.usage else 0,
             "output_tokens": response.usage.completion_tokens if response.usage else 0,
         }
-        
+
         # Add cached tokens if available
         if response.usage and hasattr(response.usage, "prompt_tokens_details"):
             details = response.usage.prompt_tokens_details
@@ -96,7 +132,7 @@ class OpenAIProvider:
                 usage["input_tokens_details"] = {
                     "cached_tokens": details.cached_tokens or 0,
                 }
-        
+
         return {
             "content": content,
             "usage": usage,
@@ -113,16 +149,25 @@ class OpenAIProvider:
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Send streaming chat completion request.
-        
+
         Args:
             model: Model identifier
             messages: List of messages
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             **kwargs: Additional parameters
-        
+
         Yields:
             Response chunks with 'delta'
+
+        Raises:
+            ProviderAuthError: Authentication failed
+            ProviderRateLimitError: Rate limit exceeded
+            ProviderTimeoutError: Request timeout
+            ProviderInvalidRequestError: Invalid request parameters
+            ProviderNotFoundError: Model or resource not found
+            ProviderServerError: Server error
+            ProviderError: Other provider errors
         """
         params = {
             "model": model,
@@ -130,13 +175,30 @@ class OpenAIProvider:
             "temperature": temperature,
             "stream": True,
         }
-        
+
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
-        
+
         params.update(kwargs)
-        
-        stream = await self._client.chat.completions.create(**params)
+
+        try:
+            stream = await self._client.chat.completions.create(**params)
+        except openai.AuthenticationError as e:
+            raise ProviderAuthError(self.name, f"Invalid API key: {str(e)}", e)
+        except openai.RateLimitError as e:
+            raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {str(e)}", e)
+        except (openai.APITimeoutError, openai.Timeout) as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except openai.BadRequestError as e:
+            raise ProviderInvalidRequestError(self.name, f"Invalid request: {str(e)}", e)
+        except openai.NotFoundError as e:
+            raise ProviderNotFoundError(self.name, f"Model not found: {str(e)}", e)
+        except openai.InternalServerError as e:
+            raise ProviderServerError(self.name, f"Server error: {str(e)}", e, status_code=500)
+        except openai.APIError as e:
+            raise ProviderError(self.name, f"API error: {str(e)}", e)
+        except Exception as e:
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
 
         async for chunk in stream:
             # Try to surface usage when available (some SDKs expose usage on final chunk)
@@ -213,8 +275,25 @@ class OpenAIProvider:
             params["store"] = True
         
         params.update(kwargs)
-        
-        response = await self._client.responses.create(**params)
+
+        try:
+            response = await self._client.responses.create(**params)
+        except openai.AuthenticationError as e:
+            raise ProviderAuthError(self.name, f"Invalid API key: {str(e)}", e)
+        except openai.RateLimitError as e:
+            raise ProviderRateLimitError(self.name, f"Rate limit exceeded: {str(e)}", e)
+        except (openai.APITimeoutError, openai.Timeout) as e:
+            raise ProviderTimeoutError(self.name, f"Request timeout: {str(e)}", e)
+        except openai.BadRequestError as e:
+            raise ProviderInvalidRequestError(self.name, f"Invalid request: {str(e)}", e)
+        except openai.NotFoundError as e:
+            raise ProviderNotFoundError(self.name, f"Model not found: {str(e)}", e)
+        except openai.InternalServerError as e:
+            raise ProviderServerError(self.name, f"Server error: {str(e)}", e, status_code=500)
+        except openai.APIError as e:
+            raise ProviderError(self.name, f"API error: {str(e)}", e)
+        except Exception as e:
+            raise ProviderError(self.name, f"Unexpected error: {str(e)}", e)
 
         # Extract content and structured output
         content = ""
