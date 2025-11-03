@@ -23,6 +23,11 @@ class UsageStats:
     This means:
     - Uncached input tokens = input_tokens - cached_tokens
     - Regular output tokens = output_tokens - reasoning_tokens
+
+    Memory Folding statistics:
+    - original_context_tokens: Tokens before Memory Folding compression
+    - compressed_context_tokens: Tokens after Memory Folding compression
+    - distillation_tokens: Tokens consumed by distillation operations
     """
 
     input_tokens: int = 0
@@ -30,10 +35,25 @@ class UsageStats:
     cached_tokens: int = 0
     reasoning_tokens: int = 0
 
+    # Memory Folding statistics
+    original_context_tokens: int = 0
+    compressed_context_tokens: int = 0
+    distillation_tokens: int = 0
+
     @property
     def total_tokens(self) -> int:
         """Total tokens (input + output, excluding cached)."""
         return self.input_tokens + self.output_tokens
+
+    @property
+    def saved_tokens(self) -> int:
+        """Tokens saved by Memory Folding compression."""
+        return max(0, self.original_context_tokens - self.compressed_context_tokens)
+
+    @property
+    def net_saved_tokens(self) -> int:
+        """Net tokens saved (accounting for distillation cost)."""
+        return self.saved_tokens - self.distillation_tokens
 
     def validate(self) -> None:
         """
@@ -59,13 +79,25 @@ class UsageStats:
 
     def to_dict(self) -> Dict[str, int]:
         """Convert to dictionary."""
-        return {
+        result = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cached_tokens": self.cached_tokens,
             "reasoning_tokens": self.reasoning_tokens,
             "total_tokens": self.total_tokens,
         }
+
+        # Add Memory Folding stats if present
+        if self.original_context_tokens > 0 or self.compressed_context_tokens > 0:
+            result.update({
+                "original_context_tokens": self.original_context_tokens,
+                "compressed_context_tokens": self.compressed_context_tokens,
+                "distillation_tokens": self.distillation_tokens,
+                "saved_tokens": self.saved_tokens,
+                "net_saved_tokens": self.net_saved_tokens,
+            })
+
+        return result
 
 
 class TokenMeter:
@@ -128,6 +160,41 @@ class TokenMeter:
         self._total_usage.output_tokens += output_tokens
         self._total_usage.cached_tokens += cached_tokens
         self._total_usage.reasoning_tokens += reasoning_tokens
+
+    def record_memory_folding(
+        self,
+        provider: str,
+        model: str,
+        stats: Dict[str, int],
+    ) -> None:
+        """
+        Record Memory Folding statistics.
+
+        Args:
+            provider: Provider name
+            model: Model name
+            stats: Memory Folding stats dictionary with keys:
+                   - original_tokens
+                   - compressed_tokens
+                   - distillation_tokens
+        """
+        # Ensure provider/model exists
+        if provider not in self._usage_by_provider:
+            self._usage_by_provider[provider] = {}
+
+        if model not in self._usage_by_provider[provider]:
+            self._usage_by_provider[provider][model] = UsageStats()
+
+        # Update provider-specific usage
+        usage = self._usage_by_provider[provider][model]
+        usage.original_context_tokens += stats.get("original_tokens", 0)
+        usage.compressed_context_tokens += stats.get("compressed_tokens", 0)
+        usage.distillation_tokens += stats.get("distillation_tokens", 0)
+
+        # Update total usage
+        self._total_usage.original_context_tokens += stats.get("original_tokens", 0)
+        self._total_usage.compressed_context_tokens += stats.get("compressed_tokens", 0)
+        self._total_usage.distillation_tokens += stats.get("distillation_tokens", 0)
     
     def get_usage(
         self,

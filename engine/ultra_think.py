@@ -17,6 +17,7 @@ from mindiv.engine.deep_think import DeepThinkEngine
 from mindiv.utils.messages import ensure_messages, extract_text
 from mindiv.utils.token_meter import TokenMeter
 from mindiv.utils.cache import PrefixCache
+from mindiv.utils.memory_folding import MemoryFoldingConfig
 
 
 class UltraThinkEngine:
@@ -51,6 +52,7 @@ class UltraThinkEngine:
         rate_limiter: Optional[Any] = None,
         rate_limit_timeout: Optional[float] = None,
         rate_limit_strategy: str = "wait",
+        memory_folding_config: Optional[MemoryFoldingConfig] = None,
     ) -> None:
         """
         Initialize UltraThink engine.
@@ -88,6 +90,7 @@ class UltraThinkEngine:
         self.rate_limiter = rate_limiter
         self.rate_limit_timeout = rate_limit_timeout
         self.rate_limit_strategy = rate_limit_strategy
+        self.memory_config = memory_folding_config or MemoryFoldingConfig()
     
     def _emit(self, event: str, payload: Dict[str, Any]) -> None:
         """Emit progress event."""
@@ -195,6 +198,7 @@ class UltraThinkEngine:
             rate_limiter=self.rate_limiter,
             rate_limit_timeout=self.rate_limit_timeout,
             rate_limit_strategy=self.rate_limit_strategy,
+            memory_folding_config=self.memory_config,
         )
         
         result = await engine.run()

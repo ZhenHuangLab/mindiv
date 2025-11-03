@@ -13,6 +13,7 @@ from mindiv.engine.verify import verify_with_llm, arithmetic_sanity_check
 from mindiv.utils.messages import ensure_messages, extract_text
 from mindiv.utils.token_meter import TokenMeter
 from mindiv.utils.cache import PrefixCache
+from mindiv.utils.memory_folding import MemoryFoldingConfig, MemoryFoldingManager
 
 
 class DeepThinkEngine:
@@ -42,6 +43,7 @@ class DeepThinkEngine:
         rate_limiter: Optional[Any] = None,
         rate_limit_timeout: Optional[float] = None,
         rate_limit_strategy: str = "wait",
+        memory_folding_config: Optional[MemoryFoldingConfig] = None,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -62,6 +64,16 @@ class DeepThinkEngine:
         self.rate_limiter = rate_limiter
         self.rate_limit_timeout = rate_limit_timeout
         self.rate_limit_strategy = rate_limit_strategy
+
+        # Memory Folding
+        self.memory_config = memory_folding_config or MemoryFoldingConfig()
+        self.memory_manager: Optional[MemoryFoldingManager] = None
+        if self.memory_config.enabled:
+            self.memory_manager = MemoryFoldingManager(
+                config=self.memory_config,
+                cache=self.cache,
+                main_provider=self.provider,
+            )
 
     def _emit(self, event: str, payload: Dict[str, Any]) -> None:
         if self.on_progress:
@@ -146,9 +158,31 @@ class DeepThinkEngine:
         solution_text: Optional[str] = None
         verifications: List[Dict[str, Any]] = []
 
+        # Process conversation history with Memory Folding
+        processed_history = self.history
+        if self.memory_manager:
+            processed_history, folding_stats = await self.memory_manager.process_history(self.history)
+
+            # Add cache_control for Anthropic
+            if self.provider.capabilities.supports_caching and self.provider.name == "anthropic":
+                processed_history = self.memory_manager.add_cache_control_for_anthropic(processed_history)
+
+            # Record Memory Folding statistics
+            self.meter.record_memory_folding(
+                provider=self.provider.name,
+                model=self._stage_model("initial"),
+                stats=folding_stats.to_dict()
+            )
+
+            self._emit("memory_folding", {
+                "original_tokens": folding_stats.original_tokens,
+                "compressed_tokens": folding_stats.compressed_tokens,
+                "saved_tokens": folding_stats.saved_tokens,
+            })
+
         # Build initial messages with system prompt and optional knowledge
         system = DEEP_THINK_INITIAL_PROMPT + (f"\n\n### Knowledge ###\n{self.knowledge_context}\n" if self.knowledge_context else "")
-        messages = [{"role": "system", "content": system}] + self.history + [{"role": "user", "content": self.problem_statement}]
+        messages = [{"role": "system", "content": system}] + processed_history + [{"role": "user", "content": self.problem_statement}]
         messages = ensure_messages(messages)
 
         # Provider-side prefix cache anchor (Responses only)
