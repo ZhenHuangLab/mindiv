@@ -130,14 +130,14 @@ class DeepThinkEngine:
             llm_task = verify_with_llm(self.provider, self._stage_model("verification"), problem_text, solution_text, **self.llm_params)
             arith_res, v = await asyncio.gather(arith_task, llm_task)
             # Aggregate result: require LLM says yes AND arithmetic not False
-            verdict_text = v.get("verdict", "")
-            is_good = ("yes" in verdict_text.lower()) and (arith_res is not False)
+            verdict = (v.get("verdict") or "").strip().lower()
+            is_good = (verdict == "pass") and (arith_res is not False)
             v = {**v, "arith": arith_res}
             return v, is_good
         else:
             v = await verify_with_llm(self.provider, self._stage_model("verification"), problem_text, solution_text, **self.llm_params)
-            verdict_text = v.get("verdict", "")
-            is_good = "yes" in verdict_text.lower()
+            verdict = (v.get("verdict") or "").strip().lower()
+            is_good = (verdict == "pass")
             return v, is_good
 
     async def run(self) -> Dict[str, Any]:

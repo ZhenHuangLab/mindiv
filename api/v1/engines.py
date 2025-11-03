@@ -31,6 +31,44 @@ class RateLimitConfig(BaseModel):
     window_seconds: Optional[float] = Field(None, description="Fixed window size in seconds")
 
 
+
+async def _configure_rate_limiter(cfg, req_rate_limit: Optional[RateLimitConfig], provider: Any, model_name: str):
+    """
+    Compute effective rate-limit settings by merging request overrides with config defaults,
+    configure the global limiter if any limit is specified, and return a tuple of
+    (rate_limiter, timeout, strategy).
+    """
+    from mindiv.utils.rate_limiter import get_global_rate_limiter
+
+    rl_defaults = getattr(cfg, "rate_limit", None)
+    rl_req = req_rate_limit
+
+    qps = rl_req.qps if rl_req and rl_req.qps is not None else getattr(rl_defaults, "qps", None)
+    burst = rl_req.burst if rl_req and rl_req.burst is not None else getattr(rl_defaults, "burst", None)
+    window_limit = rl_req.window_limit if rl_req and rl_req.window_limit is not None else getattr(rl_defaults, "window_limit", None)
+    window_seconds = rl_req.window_seconds if rl_req and rl_req.window_seconds is not None else getattr(rl_defaults, "window_seconds", None)
+    timeout = rl_req.timeout if rl_req and rl_req.timeout is not None else getattr(rl_defaults, "timeout", None)
+    strategy = (rl_req.strategy if rl_req and rl_req.strategy else getattr(rl_defaults, "strategy", "wait")) or "wait"
+    template = getattr(rl_defaults, "bucket_template", "{provider}:{model}") if rl_defaults else "{provider}:{model}"
+
+    rate_limiter = None
+    if any(v is not None for v in (qps, burst, window_limit, window_seconds)):
+        gl = get_global_rate_limiter()
+        bucket_key = _compose_bucket_key(
+            template,
+            getattr(provider, "name", ""),
+            model_name,
+            rl_req.bucket_key if rl_req else None,
+        )
+        if qps is not None and burst is not None:
+            await gl.configure_bucket(bucket_key, qps=float(qps), burst=int(burst))
+        if window_limit is not None and window_seconds is not None:
+            await gl.configure_window(bucket_key, limit=int(window_limit), window_seconds=float(window_seconds))
+        rate_limiter = gl
+
+    return rate_limiter, timeout, strategy
+
+
 class DeepThinkRequest(BaseModel):
     model: str = Field(..., description="Configured model id")
     problem: Any
@@ -59,27 +97,12 @@ async def deepthink(req: DeepThinkRequest) -> Dict[str, Any]:
     cache = PrefixCache()
 
     # Configure global rate limiter (merge request with config defaults)
-    rate_limiter = None
-    from mindiv.utils.rate_limiter import get_global_rate_limiter
-    rl_defaults = getattr(cfg, "rate_limit", None)
-    rl_req = req.rate_limit
-    # Derive effective values
-    qps = rl_req.qps if rl_req and rl_req.qps is not None else getattr(rl_defaults, "qps", None)
-    burst = rl_req.burst if rl_req and rl_req.burst is not None else getattr(rl_defaults, "burst", None)
-    window_limit = rl_req.window_limit if rl_req and rl_req.window_limit is not None else getattr(rl_defaults, "window_limit", None)
-    window_seconds = rl_req.window_seconds if rl_req and rl_req.window_seconds is not None else getattr(rl_defaults, "window_seconds", None)
-    timeout = rl_req.timeout if rl_req and rl_req.timeout is not None else getattr(rl_defaults, "timeout", None)
-    strategy = (rl_req.strategy if rl_req and rl_req.strategy else getattr(rl_defaults, "strategy", "wait")) or "wait"
-    template = getattr(rl_defaults, "bucket_template", "{provider}:{model}") if rl_defaults else "{provider}:{model}"
-
-    if any(v is not None for v in (qps, burst, window_limit, window_seconds)):
-        gl = get_global_rate_limiter()
-        bucket_key = _compose_bucket_key(template, getattr(provider, "name", ""), model_name, rl_req.bucket_key if rl_req else None)
-        if qps is not None and burst is not None:
-            await gl.configure_bucket(bucket_key, qps=float(qps), burst=int(burst))
-        if window_limit is not None and window_seconds is not None:
-            await gl.configure_window(bucket_key, limit=int(window_limit), window_seconds=float(window_seconds))
-        rate_limiter = gl
+    rate_limiter, rl_timeout, rl_strategy = await _configure_rate_limiter(
+        cfg=cfg,
+        req_rate_limit=req.rate_limit,
+        provider=provider,
+        model_name=model_name,
+    )
 
     engine = DeepThinkEngine(
         provider=provider,
@@ -95,8 +118,8 @@ async def deepthink(req: DeepThinkRequest) -> Dict[str, Any]:
         token_meter=meter,
         prefix_cache=cache,
         rate_limiter=rate_limiter,
-        rate_limit_timeout=(req.rate_limit.timeout if req.rate_limit and req.rate_limit.timeout is not None else getattr(cfg.rate_limit, "timeout", None)),
-        rate_limit_strategy=((req.rate_limit.strategy or "wait") if req.rate_limit else getattr(cfg.rate_limit, "strategy", "wait")),
+        rate_limit_timeout=rl_timeout,
+        rate_limit_strategy=rl_strategy,
     )
 
     result = await engine.run()
@@ -139,26 +162,12 @@ async def ultrathink(req: UltraThinkRequest) -> Dict[str, Any]:
     cache = PrefixCache()
 
     # Configure global rate limiter (merge request with config defaults)
-    rate_limiter = None
-    from mindiv.utils.rate_limiter import get_global_rate_limiter
-    rl_defaults = getattr(cfg, "rate_limit", None)
-    rl_req = req.rate_limit
-    qps = rl_req.qps if rl_req and rl_req.qps is not None else getattr(rl_defaults, "qps", None)
-    burst = rl_req.burst if rl_req and rl_req.burst is not None else getattr(rl_defaults, "burst", None)
-    window_limit = rl_req.window_limit if rl_req and rl_req.window_limit is not None else getattr(rl_defaults, "window_limit", None)
-    window_seconds = rl_req.window_seconds if rl_req and rl_req.window_seconds is not None else getattr(rl_defaults, "window_seconds", None)
-    timeout = rl_req.timeout if rl_req and rl_req.timeout is not None else getattr(rl_defaults, "timeout", None)
-    strategy = (rl_req.strategy if rl_req and rl_req.strategy else getattr(rl_defaults, "strategy", "wait")) or "wait"
-    template = getattr(rl_defaults, "bucket_template", "{provider}:{model}") if rl_defaults else "{provider}:{model}"
-
-    if any(v is not None for v in (qps, burst, window_limit, window_seconds)):
-        gl = get_global_rate_limiter()
-        bucket_key = _compose_bucket_key(template, getattr(provider, "name", ""), model_name, rl_req.bucket_key if rl_req else None)
-        if qps is not None and burst is not None:
-            await gl.configure_bucket(bucket_key, qps=float(qps), burst=int(burst))
-        if window_limit is not None and window_seconds is not None:
-            await gl.configure_window(bucket_key, limit=int(window_limit), window_seconds=float(window_seconds))
-        rate_limiter = gl
+    rate_limiter, rl_timeout, rl_strategy = await _configure_rate_limiter(
+        cfg=cfg,
+        req_rate_limit=req.rate_limit,
+        provider=provider,
+        model_name=model_name,
+    )
 
     engine = UltraThinkEngine(
         provider=provider,
@@ -175,8 +184,8 @@ async def ultrathink(req: UltraThinkRequest) -> Dict[str, Any]:
         parallel_agents=req.parallel_agents,
         enable_parallel_check=req.enable_parallel_check,
         rate_limiter=rate_limiter,
-        rate_limit_timeout=(req.rate_limit.timeout if req.rate_limit and req.rate_limit.timeout is not None else getattr(cfg.rate_limit, "timeout", None)),
-        rate_limit_strategy=((req.rate_limit.strategy or "wait") if req.rate_limit else getattr(cfg.rate_limit, "strategy", "wait")),
+        rate_limit_timeout=rl_timeout,
+        rate_limit_strategy=rl_strategy,
     )
 
     result = await engine.run()
