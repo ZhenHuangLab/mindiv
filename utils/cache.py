@@ -9,6 +9,65 @@ from pathlib import Path
 import diskcache
 
 
+def _normalize_for_cache_key(obj: Any) -> Any:
+    """
+    Normalize complex objects for cache key serialization.
+
+    Handles multi-modal content (images, tool calls), nested structures,
+    and base64-encoded images by hashing them instead of including full content.
+    This ensures that complex objects like images and tool calls can be safely
+    serialized to JSON for cache key generation.
+
+    Args:
+        obj: Object to normalize (can be dict, list, or primitive type)
+
+    Returns:
+        Normalized object that is JSON-serializable
+
+    Examples:
+        >>> _normalize_for_cache_key("simple string")
+        "simple string"
+
+        >>> _normalize_for_cache_key({"type": "text", "text": "hello"})
+        {"type": "text", "text": "hello"}
+
+        >>> _normalize_for_cache_key({"image_url": "data:image/png;base64,..."})
+        {"image_url": "image_hash:a1b2c3d4e5f6..."}
+    """
+    # Base types - return as-is
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # Dictionary - recursively normalize
+    if isinstance(obj, dict):
+        normalized = {}
+        for k, v in obj.items():
+            # Special handling for image URLs (base64 or regular)
+            if k in ("image_url", "url") and isinstance(v, (str, dict)):
+                if isinstance(v, dict):
+                    url = v.get("url", "")
+                else:
+                    url = v
+
+                # Hash base64 images to reduce size while maintaining uniqueness
+                if isinstance(url, str) and url.startswith("data:image"):
+                    # Use first 16 chars of hash for readability
+                    normalized[k] = f"image_hash:{hashlib.sha256(url.encode()).hexdigest()[:16]}"
+                else:
+                    normalized[k] = url
+            else:
+                normalized[k] = _normalize_for_cache_key(v)
+        return normalized
+
+    # List/tuple - recursively normalize
+    if isinstance(obj, (list, tuple)):
+        return [_normalize_for_cache_key(item) for item in obj]
+
+    # Fallback for unknown types - convert to string representation
+    # This ensures we don't fail on unexpected types while maintaining determinism
+    return str(obj)
+
+
 class PrefixCache:
     """
     Manages prefix caching for prompts and responses.
@@ -58,11 +117,14 @@ class PrefixCache:
             model: Model name
             system: System prompt
             knowledge: Knowledge context
-            history: Conversation history
+            history: Conversation history (may contain multi-modal content)
             params: Additional parameters (temperature, etc.)
 
         Returns:
             Cache key (hex digest)
+
+        Raises:
+            TypeError: If components cannot be serialized to JSON after normalization
         """
         components = {
             "provider": provider,
@@ -73,8 +135,20 @@ class PrefixCache:
             "params": params or {},
         }
 
+        # Normalize complex objects (images, tool calls, etc.) before serialization
+        normalized_components = _normalize_for_cache_key(components)
+
         # Serialize to JSON and hash
-        serialized = json.dumps(components, sort_keys=True)
+        # If this fails, it indicates an unexpected object type that needs handling
+        try:
+            serialized = json.dumps(normalized_components, sort_keys=True)
+        except (TypeError, ValueError) as e:
+            raise TypeError(
+                f"Failed to serialize cache key components after normalization. "
+                f"This indicates an unexpected object type in the input. "
+                f"Error: {e}"
+            ) from e
+
         return hashlib.sha256(serialized.encode()).hexdigest()
 
     def key(
@@ -89,10 +163,13 @@ class PrefixCache:
         Args:
             system: System prompt
             knowledge: Knowledge context
-            history: Conversation history
+            history: Conversation history (may contain multi-modal content)
 
         Returns:
             Cache key (hex digest)
+
+        Raises:
+            TypeError: If components cannot be serialized to JSON after normalization
         """
         components = {
             "system": system or "",
@@ -100,7 +177,19 @@ class PrefixCache:
             "history": history or [],
         }
 
-        serialized = json.dumps(components, sort_keys=True)
+        # Normalize complex objects (images, tool calls, etc.) before serialization
+        normalized_components = _normalize_for_cache_key(components)
+
+        # Serialize to JSON and hash
+        try:
+            serialized = json.dumps(normalized_components, sort_keys=True)
+        except (TypeError, ValueError) as e:
+            raise TypeError(
+                f"Failed to serialize cache key components after normalization. "
+                f"This indicates an unexpected object type in the input. "
+                f"Error: {e}"
+            ) from e
+
         return hashlib.sha256(serialized.encode()).hexdigest()
     
     def get(self, key: str) -> Optional[Any]:

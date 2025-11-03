@@ -424,26 +424,22 @@ except Exception as e:
 
 ## ⚠️ 低优先级改进
 
-### [ ] Issue #10: 改进缓存键序列化
-**文件**: `mindiv/utils/cache.py`  
+### [x] Issue #10: 改进缓存键序列化
+**文件**: `mindiv/utils/cache.py`
+**状态**: ✅ 已修复 (2025-11-03)
 
-**使用更健壮的序列化**:
-```python
-import pickle
-import base64
+**问题**: 当 history 包含复杂对象（图片、工具调用等）时，JSON 序列化失败
 
-def compute_key(self, ...) -> str:
-    components = {...}
-    
-    try:
-        # Try JSON first (human-readable)
-        serialized = json.dumps(components, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        # Fallback to pickle for complex objects
-        serialized = base64.b64encode(pickle.dumps(components)).decode()
-    
-    return hashlib.sha256(serialized.encode()).hexdigest()
-```
+**解决方案**: 实现规范化函数处理复杂对象
+- 添加 `_normalize_for_cache_key()` 函数
+- 递归处理字典和列表
+- 对 base64 图片进行哈希处理（减少大小）
+- 保持向后兼容性
+- 遵循 Fail-Fast 原则
+
+**详细文档**: 参见 `docs/ISSUE_10_FIX.md`
+
+**测试**: `test/test_cache_normalization_simple.py` - 所有测试通过 ✅
 
 ---
 
