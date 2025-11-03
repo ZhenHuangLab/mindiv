@@ -187,7 +187,7 @@ def _safe_dump(x: Any):
 
 ## 🟡 中等优先级问题
 
-### Issue #5: UltraThink JSON 解析 fallback 违反 fail-fast 原则
+### Issue #5: UltraThink JSON 解析 fallback 违反 fail-fast 原则 ✅ 已修复 (2025-11-03)
 **文件**: `mindiv/engine/ultra_think.py:153-167`  
 **严重性**: 中  
 **问题**: 当 LLM 无法生成正确的 JSON 时,静默降级到简单配置,掩盖了问题。
@@ -201,7 +201,7 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to parse agent configs: {e}\nRaw output: {config_text}")
 ```
-
+**状态**: ✅ 已修复 (2025-11-03)
 ---
 
 ### Issue #6: 验证结果解析过于脆弱

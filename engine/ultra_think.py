@@ -151,20 +151,11 @@ class UltraThinkEngine:
         
         # Parse agent configurations
         try:
-            # Try to extract JSON array
             configs = json.loads(config_text)
             if not isinstance(configs, list):
-                raise ValueError("Expected JSON array")
-        except Exception:
-            # Fallback: create simple configs
-            configs = [
-                {
-                    "agentId": f"agent-{i+1}",
-                    "approach": f"Approach {i+1}",
-                    "specificPrompt": f"Solve using method {i+1}",
-                }
-                for i in range(self.num_agents)
-            ]
+                raise ValueError("Expected JSON array of agent configs")
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse agent configs: {e}\nRaw output: {config_text}")
         
         self._emit("agents_configured", {"num_agents": len(configs)})
         return configs
