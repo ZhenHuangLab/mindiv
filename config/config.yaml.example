@@ -1,0 +1,115 @@
+# mindiv Configuration Example
+# Copy this file to config.yaml and fill in your settings
+
+system:
+  host: "0.0.0.0"
+  port: 8000
+  api_key: "your-api-key-here"  # Optional: API key for authentication
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# Provider configurations
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    supports_responses: true
+    supports_streaming: true
+    timeout: 300
+    max_retries: 3
+  
+  anthropic:
+    base_url: "https://api.anthropic.com"
+    api_key: "${ANTHROPIC_API_KEY}"
+    supports_responses: false
+    supports_streaming: true
+    timeout: 300
+    max_retries: 3
+  
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    api_key: "${GEMINI_API_KEY}"
+    supports_responses: false
+    supports_streaming: true
+    timeout: 300
+    max_retries: 3
+
+# Model configurations
+models:
+  # DeepThink example with OpenAI
+  gpt-4o-deepthink:
+    name: "GPT-4O DeepThink"
+    provider: openai
+    model: gpt-4o
+    level: deepthink
+    max_iterations: 30
+    required_verifications: 3
+    max_errors: 10
+    enable_planning: true
+    enable_parallel_check: false
+    rpm: 20
+    stage_models:
+      initial: gpt-4o
+      improvement: gpt-4o
+      verification: gpt-4o-mini
+      correction: gpt-4o
+      summary: gpt-4o
+  
+  # UltraThink example with OpenAI
+  gpt-4o-ultrathink:
+    name: "GPT-4O UltraThink"
+    provider: openai
+    model: gpt-4o
+    level: ultrathink
+    num_agents: 5
+    parallel_run_agents: 3
+    max_iterations: 30
+    required_verifications: 3
+    max_errors: 10
+    enable_planning: true
+    enable_parallel_check: true
+    rpm: 20
+    stage_models:
+      planning: gpt-4o
+      agent_config: gpt-4o
+      agent_thinking: gpt-4o
+      synthesis: gpt-4o
+      summary: gpt-4o
+  
+  # DeepThink with Gemini
+  gemini-2.5-pro-deepthink:
+    name: "Gemini 2.5 Pro DeepThink"
+    provider: gemini
+    model: gemini-2.5-pro-latest
+    level: deepthink
+    max_iterations: 30
+    required_verifications: 3
+    max_errors: 10
+    enable_planning: true
+    enable_parallel_check: false
+    rpm: 15
+    stage_models:
+      initial: gemini-2.5-pro-latest
+      improvement: gemini-2.5-pro-latest
+      verification: gemini-2.5-flash-latest
+      correction: gemini-2.5-pro-latest
+      summary: gemini-2.5-pro-latest
+  
+  # DeepThink with Claude
+  claude-sonnet-deepthink:
+    name: "Claude Sonnet DeepThink"
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    level: deepthink
+    max_iterations: 30
+    required_verifications: 3
+    max_errors: 10
+    enable_planning: true
+    enable_parallel_check: false
+    rpm: 10
+    stage_models:
+      initial: claude-sonnet-4-20250514
+      improvement: claude-sonnet-4-20250514
+      verification: claude-sonnet-4-20250514
+      correction: claude-sonnet-4-20250514
+      summary: claude-sonnet-4-20250514
+

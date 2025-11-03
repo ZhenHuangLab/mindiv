@@ -1,0 +1,53 @@
+# Pricing information for token cost estimation
+# All prices are in USD per 1M tokens
+
+openai:
+  gpt-4o:
+    prompt: 2.50
+    completion: 10.00
+    reasoning: 60.00  # For reasoning tokens in responses API
+    cached_prompt: 1.25  # 50% discount for cached tokens
+  
+  gpt-4o-mini:
+    prompt: 0.15
+    completion: 0.60
+    reasoning: 3.60
+    cached_prompt: 0.075
+  
+  o1:
+    prompt: 15.00
+    completion: 60.00
+    reasoning: 60.00
+    cached_prompt: 7.50
+  
+  o1-mini:
+    prompt: 3.00
+    completion: 12.00
+    reasoning: 12.00
+    cached_prompt: 1.50
+
+anthropic:
+  claude-sonnet-4-20250514:
+    prompt: 3.00
+    completion: 15.00
+    cached_prompt: 0.30  # 90% discount for prompt caching
+  
+  claude-opus-4-20250514:
+    prompt: 15.00
+    completion: 75.00
+    cached_prompt: 1.50
+
+gemini:
+  gemini-2.5-pro-latest:
+    prompt: 1.25
+    completion: 5.00
+    # Gemini doesn't have explicit cached token pricing yet
+  
+  gemini-2.5-flash-latest:
+    prompt: 0.075
+    completion: 0.30
+  
+  gemini-2.0-flash-thinking-exp:
+    prompt: 0.00  # Free during preview
+    completion: 0.00
+
